@@ -1,0 +1,16 @@
+#ifndef MKCLIENT_HPP_
+#define MKCLIENT_HPP_
+ 
+namespace cryptomarket{
+
+  class CryptoMarketClient
+  {
+  public:
+    
+  private:
+    
+  };//class CryptoMarketClient
+  
+};//namespace cryptomarket
+
+#endif
