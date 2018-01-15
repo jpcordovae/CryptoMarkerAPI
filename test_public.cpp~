@@ -1,0 +1,14 @@
+#include "cmclient.hpp"
+
+int main()
+{
+
+  CMInput in;
+  CMClient client;
+
+  std::cout << client.public_method("market",in);
+
+  
+  
+  return EXIT_SUCCESS;
+}
