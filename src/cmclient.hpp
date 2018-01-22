@@ -29,7 +29,7 @@ namespace cryptomarket{
 
     std::string public_method(const std::string &method, const CMInput &input);
 
-    std::string private_method(const std::string &method, const CMInput &input);
+    std::string endpoint(const std::string &method,const CMInput &post, const CMInput &get, bool authenticated);
 
     void update_server_timestamp();
     

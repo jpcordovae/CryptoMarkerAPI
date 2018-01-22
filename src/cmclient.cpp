@@ -7,6 +7,8 @@
 #include <ctime>
 #include <iomanip>
 #include <chrono>
+#include <iomanip>
+#include <algorithm>
 
 #include <openssl/buffer.h>
 #include <openssl/sha.h>
@@ -17,7 +19,16 @@
 
 namespace cryptomarket{
 
-  static std::vector<unsigned char> sha384(const std::string &data)
+  static std::string ucVector_to_string(const std::vector<unsigned char> &buffer)
+  {
+    std::ostringstream oss(std::ostringstream::out);
+    for(auto uc : buffer ){
+      oss << std::hex << std::setfill('0') << std::setw(2) << uc;
+    }    
+    return oss.str();
+  }
+  
+  /*static std::vector<unsigned char> sha384(const std::string &data)
   {
     std::vector<unsigned char> digest(SHA384_DIGEST_LENGTH);
     SHA512_CTX ctx;
@@ -25,7 +36,7 @@ namespace cryptomarket{
     SHA384_Update(&ctx,data.c_str(),data.length());
     SHA384_Final(digest.data(),&ctx);
     return digest;
-  }
+    }*/
 
   //------------------------------------------------------------------------------
   // helper function to hash with HMAC algorithm:
@@ -35,27 +46,27 @@ namespace cryptomarket{
     unsigned int len = EVP_MAX_MD_SIZE;
     std::vector<unsigned char> digest(len);
 
-    HMAC_CTX *ctx;
+    HMAC_CTX ctx;
     //HMAC_CTX *ctx = HMAC_CTX_new();
-    HMAC_CTX_init(ctx);
+    HMAC_CTX_init(&ctx);
 
-    HMAC_Init_ex(ctx, key.data(), key.size(), EVP_sha384(), NULL);
-    HMAC_Update(ctx, data.data(), data.size());
-    HMAC_Final(ctx, digest.data(), &len);
+    HMAC_Init_ex(&ctx, key.data(), key.size(), EVP_sha384(), NULL);
+    HMAC_Update(&ctx, data.data(), data.size());
+    HMAC_Final(&ctx, digest.data(), &len);
 
     //HMAC_CTX_free(ctx);
-    HMAC_CTX_cleanup(ctx);
+    HMAC_CTX_cleanup(&ctx);
 
     return digest;
   }
 
-  static std::string b64_encode(const std::vector<unsigned char> &data){
+  static std::string b64_encode(const std::vector<unsigned char> &data)
+  {
     BIO *b64 = BIO_new(BIO_f_base64());
-    BIO_set_flags(b64, BIO_FLAGS_BASE64_NO_NL);
-
     BIO *bmem = BIO_new(BIO_s_mem());
-    b64 = BIO_push(b64,bmem);
 
+    BIO_set_flags(b64, BIO_FLAGS_BASE64_NO_NL);
+    b64 = BIO_push(b64,bmem);
     BIO_write(b64, data.data(),data.size());
     BIO_flush(b64);
 
@@ -63,7 +74,7 @@ namespace cryptomarket{
     BIO_get_mem_ptr(b64, &bptr);
 
     std::string output(bptr->data,bptr->length);
-    BIO_free(b64);
+    BIO_free_all(b64);
     return output;
   }
 
@@ -79,13 +90,14 @@ namespace cryptomarket{
     BIO_free_all(bmem);
 
     if(decoded_size < 0){
-      std::cerr << "failed while decoding base64. ";
+      throw std::runtime_error("failed while decoding base64.");
     }
 
     return output;
   }
-  
-  static std::string build_query(const CMInput &input)
+
+  //  JSON format of post data
+  static std::string build_get(const CMInput &input)
   {
     std::ostringstream oss;
     CMInput::const_iterator it = input.begin();
@@ -122,7 +134,6 @@ namespace cryptomarket{
   {
     key_ = key;
     secret_ = secret;
-    //TODO: ADD DEFAULT URL
     url_ = "https://api.cryptomkt.com";
     version_ = "v1";
     init();
@@ -138,7 +149,7 @@ namespace cryptomarket{
   void  CryptoMarketClient::init(){
     curl_ = curl_easy_init();
     if(curl_){
-      //curl_easy_setopt(curl_,CURLOPT_VERBOSE, CURL_VERBOSE);
+      curl_easy_setopt(curl_,CURLOPT_VERBOSE, 1L);
       curl_easy_setopt(curl_,CURLOPT_SSL_VERIFYPEER, 1L);
       curl_easy_setopt(curl_,CURLOPT_SSL_VERIFYHOST, 2L);
       curl_easy_setopt(curl_,CURLOPT_USERAGENT,"CritpoMarket C++ API Client");
@@ -157,12 +168,28 @@ namespace cryptomarket{
 
   std::string CryptoMarketClient::signature(const std::string &timestamp,const std::string &path_url,const std::string &postdata)
   {
-    std::vector<unsigned char> data(timestamp.begin(),timestamp.end());
-
-    data.insert(data.end(),path_url.begin(),path_url.end());
-    data.insert(data.end(),postdata.begin(),postdata.end());
+    std::cout << "TIMESTAMP: " << timestamp << std::endl;
+    std::cout << "PATH_URL:  " << path_url << std::endl;
+    std::cout << "POSTDATA:  " << postdata << std::endl;
     
-    return b64_encode(hmac_sha384(data,b64_decode(secret_)));
+    std::vector<unsigned char> data(timestamp.begin(),timestamp.end());
+    
+    //std::string space = " ";
+    std::string myurl = path_url.substr(0,path_url.find("?"));
+    //data.insert(data.end(),space.begin(),space.end());
+    data.insert(data.end(),myurl.begin(),myurl.end());
+
+    if(!postdata.empty())
+      data.insert(data.end(),postdata.begin(),postdata.end());
+    
+    std::cout << "DATA : " << std::string(data.begin(),data.end()) << std::endl;
+    
+    std::vector<unsigned char> secret = b64_decode(secret_);
+    std::vector<unsigned char> hashed = hmac_sha384(data,secret);
+    //std::string encoded = b64_encode(hashed);
+    std::string encoded = ucVector_to_string(hashed);
+    
+    return encoded;
   }
 
   size_t CryptoMarketClient::write_cb(char *ptr, size_t size, size_t nmemb, void *userdata)
@@ -180,9 +207,8 @@ namespace cryptomarket{
 
     if(!input.empty()){
       method_url.append("?");
-      method_url.append(build_query(input));
+      method_url.append(build_get(input));
     }
-
     //std::cout << method_url << std::endl;
     
     curl_easy_setopt(curl_,CURLOPT_URL,method_url.c_str());
@@ -200,7 +226,7 @@ namespace cryptomarket{
     CURLcode result =curl_easy_perform(curl_);
     if(result != CURLE_OK){
       std::ostringstream oss;
-      oss << "curl_easy_perform() failed at " << __LINE__ << "in function " << __FUNCTION__ << " : " << curl_easy_strerror(result);
+      oss << "curl_easy_platform() failed at " << __LINE__ << "in function " << __FUNCTION__ << " : " << curl_easy_strerror(result);
     }
     return response;
   }
@@ -211,52 +237,95 @@ namespace cryptomarket{
     //std::string sTmp = public_method();
   }
   
-  std::string CryptoMarketClient::private_method(const std::string &method, const CMInput &input)
+
+  std::string CryptoMarketClient::endpoint(const std::string &method,const CMInput &post_input, const CMInput &get_input, bool authenticated)
   {
-    std::string path = "/" + version_ + "/" + method;
-    std::string method_url = url_ + path;
-    std::string post_data = build_post(input);
-    std::time_t t = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
-    std::stringstream ss;
-    ss << std::put_time( std::localtime( &t ), "%FT%T%Z" );
-    std::string timestamp = ss.str();
+    std::string get_data;
+    std::string post_data;
+    std::string method_url = url_ + "/" + version_ + "/" + method;
     
-    // CURL options setup
-    curl_easy_setopt(curl_,CURLOPT_URL,method_url.c_str());
-    curl_easy_setopt(curl_,CURLOPT_HTTPGET,0L);//disable get
-    curl_easy_setopt(curl_,CURLOPT_POST,1L);// enable post
-
-    //set post field
-    if(!post_data.empty())
-    curl_easy_setopt(curl_,CURLOPT_POSTFIELDS, post_data.c_str());
-
-    // signature
-    std::string signed_data = signature(timestamp,method_url,post_data);
-    
-    //set header
+    // GET by defaukt
+    curl_easy_setopt(curl_,CURLOPT_HTTPGET,1L);//enable get
+    curl_easy_setopt(curl_,CURLOPT_POST,0L);// disable post
     curl_easy_setopt(curl_,CURLOPT_HTTPHEADER,NULL);
+    
+    if(!get_input.empty()){
+      method_url.append("?");
+      method_url.append(build_get(get_input));
+    }
+
+    curl_easy_setopt(curl_,CURLOPT_URL,method_url.c_str());
+    
+    std::cout << "METHOD_URL = " << method_url << std::endl;
+    
+    if(!post_input.empty()){
+      curl_easy_setopt(curl_,CURLOPT_HTTPGET,0L);//disable get
+      curl_easy_setopt(curl_,CURLOPT_POST,1L);// enable post
+      
+      post_data = build_post(post_input);
+      std::cout << "POST: " << post_data << std::endl;
+      
+      //set post field
+      curl_easy_setopt(curl_,CURLOPT_POSTFIELDS, post_data.c_str());
+      authenticated = true;
+    }
+
+    //set header
     curl_slist *chunk = NULL;
-    std::string key_header = "X-MKT-APIKEY:" + key_;
-    std::string signature_header = "X-MKT-SIGNATURE:" + signed_data;
-    std::string timestamp_header = "X-MKT-TIMESTAMP:" + timestamp;
-    chunk = curl_slist_append(chunk,key_header.c_str());
-    chunk = curl_slist_append(chunk,signature_header.c_str());
-    chunk = curl_slist_append(chunk,timestamp_header.c_str());
+      
+    if(authenticated){
+      //set time
+      std::time_t t = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+      std::stringstream ss;
+      ss << std::put_time( std::gmtime( &t ), "%FT%T" );
+      std::string timestamp = ss.str();
+
+      //dealing with the nasty lexicographic restriction value order in post_input
+      std::string post_string;
+      for(CMInput::const_iterator it=post_input.begin();it!=post_input.end();++it){
+	post_string.append(it->second);
+      }
+      
+      // signature
+      std::string signed_data = signature(timestamp,method_url,post_string);
+
+      std::string content_type = "content-type: application/x-www-form-urlencoded";
+      std::string key_header = "X-MKT-APIKEY:" + key_;
+      std::string signature_header = "X-MKT-SIGNATURE:" + signed_data;
+      std::string timestamp_header = "X-MKT-TIMESTAMP:" + timestamp;
+      
+      /*std::cout <<  key_header << std::endl;
+      std::cout <<  signature_header << std::endl;
+      std::cout <<  timestamp_header << std::endl;*/
+
+      chunk = curl_slist_append(chunk,content_type.c_str());
+      chunk = curl_slist_append(chunk,key_header.c_str());
+      chunk = curl_slist_append(chunk,signature_header.c_str());
+      chunk = curl_slist_append(chunk,timestamp_header.c_str());
+      
+      if(chunk!=NULL)
+	curl_easy_setopt(curl_,CURLOPT_HTTPHEADER,chunk);
+      else
+	std::cerr << "Error adding curl headerlist " << std::endl;
+    }
     
     //set callback
     std::string response;
     curl_easy_setopt(curl_,CURLOPT_WRITEDATA,static_cast<void*>(&response));
-
+    
     //perform CURL request
     CURLcode result = curl_easy_perform(curl_);
 
+    if(chunk!=NULL) curl_slist_free_all(chunk);
+    
     if(result != CURLE_OK){
       std::ostringstream oss;
       oss << "curl_easy_perform() failed at" << __LINE__ << " in function " << __FUNCTION__ << " : " << curl_easy_strerror(result);
     }
     
     return response;
-  }  
+    
+  }
   
   
 };//namespace cryptomarket
